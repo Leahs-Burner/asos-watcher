@@ -7,6 +7,7 @@ GitHub emails the issue to you.
 """
 import json, os, re, sys, time, urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -197,6 +198,15 @@ def main():
             title = body = None
             log(f"checked {len(snap)} items, no changes")
 
+    # At most one email per day (UK time): later changes that day are not emailed
+    today = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d")
+    last_alert_date = state.get("last_alert_date", "")
+    if title and not first_run and last_alert_date == today:
+        log(f"already emailed today, skipping: {title}")
+        title = body = None
+    if title and not first_run:
+        last_alert_date = today
+
     if title:
         with open(ALERT_PATH, "w") as f:
             f.write(body)
@@ -205,7 +215,8 @@ def main():
 
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
     with open(STATE_PATH, "w") as f:
-        json.dump({"products": slim(snap), "seen_ever": seen_ever}, f, separators=(",", ":"))
+        json.dump({"products": slim(snap), "seen_ever": seen_ever, "last_alert_date": last_alert_date},
+                  f, separators=(",", ":"))
 
 
 if __name__ == "__main__":
