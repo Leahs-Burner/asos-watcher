@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      test_email:
+        description: "Just send a test alert"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,10 +22,21 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER: ${{ github.repository_owner }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test alert
+        if: ${{ inputs.test_email }}
+        run: |
+          gh issue create --title "Test alert from your ASOS watcher" --assignee "$OWNER" \
+            --body "If this reached your inbox, alerts are working. @$OWNER"
+          exit 0
+
       - name: Load last snapshot
+        if: ${{ !inputs.test_email }}
         uses: actions/cache/restore@v4
         with:
           path: state
@@ -28,23 +44,26 @@ jobs:
           restore-keys: state-
 
       - name: Check the shop
+        if: ${{ !inputs.test_email }}
         run: python3 watcher.py
 
       - name: Save snapshot
+        if: ${{ !inputs.test_email }}
         uses: actions/cache/save@v4
         with:
           path: state
           key: state-${{ github.run_id }}
 
       - name: Send alert
-        if: hashFiles('alert.md') != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh issue create --title "$(cat alert_title.txt)" --body-file alert.md
+        if: ${{ !inputs.test_email && hashFiles('alert.md') != '' }}
+        run: |
+          printf '\n\n@%s\n' "$OWNER" >> alert.md
+          gh issue create --title "$(cat alert_title.txt)" --body-file alert.md --assignee "$OWNER"
 
       - name: Daily keep-alive
         # GitHub pauses schedules in projects with no activity for 60 days.
         # One tiny update per day prevents that.
+        if: ${{ !inputs.test_email }}
         run: |
           today=$(date -u +%F)
           if [ "$(cat last_checked.txt 2>/dev/null)" != "$today" ]; then
