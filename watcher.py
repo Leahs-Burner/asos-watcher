@@ -198,14 +198,17 @@ def main():
             title = body = None
             log(f"checked {len(snap)} items, no changes")
 
-    # At most one email per day (UK time): later changes that day are not emailed
+    # At most MAX_PER_DAY emails per day (UK time): later changes that day are not emailed
+    max_per_day = int(cfg.get("max_emails_per_day", 5))
     today = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d")
     last_alert_date = state.get("last_alert_date", "")
-    if title and not first_run and last_alert_date == today:
-        log(f"already emailed today, skipping: {title}")
+    sent_today = state.get("alerts_sent_today", 0) if last_alert_date == today else 0
+    if title and not first_run and sent_today >= max_per_day:
+        log(f"already sent {sent_today} emails today, skipping: {title}")
         title = body = None
     if title and not first_run:
         last_alert_date = today
+        sent_today += 1
 
     if title:
         with open(ALERT_PATH, "w") as f:
@@ -215,7 +218,8 @@ def main():
 
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
     with open(STATE_PATH, "w") as f:
-        json.dump({"products": slim(snap), "seen_ever": seen_ever, "last_alert_date": last_alert_date},
+        json.dump({"products": slim(snap), "seen_ever": seen_ever, "last_alert_date": last_alert_date,
+                   "alerts_sent_today": sent_today},
                   f, separators=(",", ":"))
 
 
