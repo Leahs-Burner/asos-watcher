@@ -82,6 +82,7 @@ def snapshot(products):
     return {
         str(p["id"]): {
             "title": p.get("title", ""),
+            "vendor": p.get("vendor", "") or "",
             "handle": p.get("handle", ""),
             "image": (p.get("images") or [{}])[0].get("src", "") if p.get("images") else "",
             "variants": {
@@ -92,6 +93,25 @@ def snapshot(products):
         }
         for p in products
     }
+
+
+ASOS_LABELS = ["asos", "collusion", "reclaimed vintage", "topshop", "topman", "miss selfridge", "hiit"]
+
+
+def is_asos_label(p):
+    """True for ASOS's own brands, judged by the brand (vendor) or, failing that, the title."""
+    name = (p.get("vendor") or p.get("title") or "").strip().lower()
+    return any(re.match(re.escape(b) + r"\b", name) for b in ASOS_LABELS)
+
+
+def split_priority(changes):
+    """Priority = new items and restocks from non-ASOS brands. These are never held back."""
+    pri = {"new": [], "restock": [], "price": []}
+    rest = {"new": [], "restock": [], "price": []}
+    for key, items in changes.items():
+        for c in items:
+            (pri if key in ("new", "restock") and not is_asos_label(c[0]) else rest)[key].append(c)
+    return pri, rest
 
 
 def slim(snap):
@@ -189,26 +209,29 @@ def main():
                 f"starting point.\n\nFrom now on you'll get an email like this whenever there are new items, "
                 f"restocks or price drops. [Open the shop]({BASE}/collections/all)")
         log(f"first run: recorded {len(snap)} items")
-    else:
-        changes = diff(state, snap, cfg)
-        if sum(len(v) for v in changes.values()):
-            title, body = build_alert(changes)
-            log(title)
-        else:
-            title = body = None
-            log(f"checked {len(snap)} items, no changes")
-
-    # At most MAX_PER_DAY emails per day (UK time): later changes that day are not emailed
+    # Daily limit (UK time) applies to ASOS-label items and price drops only.
+    # New items and restocks from other brands are always emailed and don't count.
     max_per_day = int(cfg.get("max_emails_per_day", 5))
     today = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d")
     last_alert_date = state.get("last_alert_date", "")
     sent_today = state.get("alerts_sent_today", 0) if last_alert_date == today else 0
-    if title and not first_run and sent_today >= max_per_day:
-        log(f"already sent {sent_today} emails today, skipping: {title}")
+
+    if not first_run:
         title = body = None
-    if title and not first_run:
-        last_alert_date = today
-        sent_today += 1
+        pri, rest = split_priority(diff(state, snap, cfg))
+        n_pri, n_rest = sum(map(len, pri.values())), sum(map(len, rest.values()))
+        include_rest = n_rest and sent_today < max_per_day
+        if n_rest and not include_rest:
+            log(f"limit reached ({sent_today} today), not emailing {n_rest} ASOS-label/price changes")
+        to_send = {k: pri[k] + (rest[k] if include_rest else []) for k in pri}
+        if sum(map(len, to_send.values())):
+            title, body = build_alert(to_send)
+            log(f"{title} [{n_pri} priority]")
+            if include_rest:
+                last_alert_date = today
+                sent_today += 1
+        else:
+            log(f"checked {len(snap)} items, nothing to email")
 
     if title:
         with open(ALERT_PATH, "w") as f:
